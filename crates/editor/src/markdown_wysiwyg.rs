@@ -529,17 +529,25 @@ impl Editor {
 
     /// Called after editor construction to auto-enable WYSIWYG mode if the
     /// global flag is set and the current file is a markdown file.
+    /// Uses `defer_in` so the toggle runs after the editor is fully mounted,
+    /// avoiding issues where decorations applied during `new_internal` get
+    /// cleared by later initialisation steps.
     pub fn maybe_auto_enable_wysiwyg(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.markdown_wysiwyg_state.active {
-            return;
-        }
         if !WYSIWYG_GLOBALLY_ENABLED.load(Ordering::SeqCst) {
             return;
         }
-        if !self.is_markdown_file(cx) {
-            return;
-        }
-        self.toggle_markdown_wysiwyg(&ToggleMarkdownWysiwyg, window, cx);
+        cx.defer_in(window, |editor, window, cx| {
+            if editor.markdown_wysiwyg_state.active {
+                return;
+            }
+            if !WYSIWYG_GLOBALLY_ENABLED.load(Ordering::SeqCst) {
+                return;
+            }
+            if !editor.is_markdown_file(cx) {
+                return;
+            }
+            editor.toggle_markdown_wysiwyg(&ToggleMarkdownWysiwyg, window, cx);
+        });
     }
 
     fn is_markdown_file(&self, cx: &Context<Self>) -> bool {
@@ -548,8 +556,8 @@ impl Editor {
         };
         let buffer = singleton_buffer.read(cx);
         if let Some(file) = buffer.file() {
-            if let Some(ext) = file.full_path(cx).extension() {
-                let ext = ext.to_string_lossy().to_lowercase();
+            if let Some(ext) = file.path().extension() {
+                let ext = ext.to_lowercase();
                 return ext == "md" || ext == "markdown" || ext == "mdx";
             }
         }
