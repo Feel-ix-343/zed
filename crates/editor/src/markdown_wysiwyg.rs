@@ -16,7 +16,14 @@ use std::any::TypeId;
 use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
+
+/// Global flag that tracks whether WYSIWYG mode should be auto-enabled for
+/// markdown files. When the user toggles WYSIWYG on, this is set to true;
+/// when toggled off, set to false. New editors for markdown files check this
+/// flag and auto-enable WYSIWYG if it is true.
+static WYSIWYG_GLOBALLY_ENABLED: AtomicBool = AtomicBool::new(false);
 
 struct WysiwygFoldTag;
 
@@ -495,6 +502,7 @@ impl Editor {
             self.set_text_style_refinement(TextStyleRefinement::default());
             self.style = None;
             self.markdown_wysiwyg_state.active = false;
+            WYSIWYG_GLOBALLY_ENABLED.store(false, Ordering::SeqCst);
             cx.notify();
         } else {
             self.markdown_wysiwyg_state.previous_show_gutter = Some(self.show_gutter);
@@ -513,9 +521,39 @@ impl Editor {
                 Some(language::language_settings::SoftWrap::PreferredLineLength);
             self.preferred_line_length_override = Some(READABLE_LINE_LENGTH);
             self.markdown_wysiwyg_state.active = true;
+            WYSIWYG_GLOBALLY_ENABLED.store(true, Ordering::SeqCst);
             refresh_wysiwyg_decorations(self, cx);
             fetch_references(self, cx);
         }
+    }
+
+    /// Called after editor construction to auto-enable WYSIWYG mode if the
+    /// global flag is set and the current file is a markdown file.
+    pub fn maybe_auto_enable_wysiwyg(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.markdown_wysiwyg_state.active {
+            return;
+        }
+        if !WYSIWYG_GLOBALLY_ENABLED.load(Ordering::SeqCst) {
+            return;
+        }
+        if !self.is_markdown_file(cx) {
+            return;
+        }
+        self.toggle_markdown_wysiwyg(&ToggleMarkdownWysiwyg, window, cx);
+    }
+
+    fn is_markdown_file(&self, cx: &Context<Self>) -> bool {
+        let Some(singleton_buffer) = self.buffer.read(cx).as_singleton() else {
+            return false;
+        };
+        let buffer = singleton_buffer.read(cx);
+        if let Some(file) = buffer.file() {
+            if let Some(ext) = file.full_path(cx).extension() {
+                let ext = ext.to_string_lossy().to_lowercase();
+                return ext == "md" || ext == "markdown" || ext == "mdx";
+            }
+        }
+        false
     }
 }
 

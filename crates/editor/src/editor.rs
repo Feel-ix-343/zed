@@ -2767,6 +2767,8 @@ impl Editor {
                 editor.register_buffer(buffer.read(cx).remote_id(), cx);
             }
             editor.report_editor_event(ReportEditorEvent::EditorOpened, None, cx);
+
+            editor.maybe_auto_enable_wysiwyg(window, cx);
         }
 
         editor
