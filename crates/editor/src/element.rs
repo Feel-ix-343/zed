@@ -9670,6 +9670,69 @@ impl Element for EditorElement {
         let rem_size = self.rem_size(cx);
         window.with_rem_size(rem_size, |window| {
             window.with_text_style(Some(text_style), |window| {
+                // When WYSIWYG mode is active, shrink the bounds from the left to add
+                // margin to the editor component itself rather than offsetting text internally.
+                let wysiwyg_is_active = self.editor.read(cx).markdown_wysiwyg_state.active;
+                let bounds = if wysiwyg_is_active {
+                    let style = &self.style;
+                    let rem_size = window.rem_size();
+                    let font_id = window.text_system().resolve_font(&style.text.font());
+                    let font_size = style.text.font_size.to_pixels(rem_size);
+                    let em_layout_width = window.text_system().em_layout_width(font_id, font_size);
+                    let em_width = window.text_system().em_width(font_id, font_size).unwrap();
+
+                    let (gutter_dimensions, soft_wrap_mode, show_scrollbars_vertical) =
+                        self.editor.update(cx, |editor, cx| {
+                            let snapshot = editor.snapshot(window, cx);
+                            let gutter_dims =
+                                snapshot.gutter_dimensions(font_id, font_size, style, window, cx);
+                            let soft_wrap = editor.soft_wrap_mode(cx);
+                            let scrollbars_v = editor.show_scrollbars.vertical;
+                            (gutter_dims, soft_wrap, scrollbars_v)
+                        });
+                    let text_width = bounds.size.width - gutter_dimensions.width;
+
+                    let settings = EditorSettings::get_global(cx);
+                    let scrollbars_shown = settings.scrollbar.show != ShowScrollbar::Never;
+                    let vertical_scrollbar_width = (scrollbars_shown
+                        && settings.scrollbar.axes.vertical
+                        && show_scrollbars_vertical)
+                        .then_some(style.scrollbar_width)
+                        .unwrap_or_default();
+                    let minimap_width = self
+                        .get_minimap_width(
+                            &settings.minimap,
+                            scrollbars_shown,
+                            text_width,
+                            em_width,
+                            font_size,
+                            rem_size,
+                            cx,
+                        )
+                        .unwrap_or_default();
+                    let right_margin = minimap_width + vertical_scrollbar_width;
+                    let extended_right = 2 * em_width + right_margin;
+                    let preliminary_editor_width = text_width - gutter_dimensions.margin - extended_right;
+
+                    let wrap_width = calculate_wrap_width(
+                        soft_wrap_mode,
+                        preliminary_editor_width,
+                        em_layout_width,
+                    );
+                    let centering_offset = if let Some(wrap_width) = wrap_width {
+                        (preliminary_editor_width - wrap_width).max(Pixels::ZERO) / 2.0
+                    } else {
+                        Pixels::ZERO
+                    };
+
+                    Bounds {
+                        origin: point(bounds.origin.x + centering_offset, bounds.origin.y),
+                        size: size(bounds.size.width - centering_offset, bounds.size.height),
+                    }
+                } else {
+                    bounds
+                };
+
                 window.with_content_mask(Some(ContentMask { bounds }), |window| {
                     let (mut snapshot, is_read_only) = self.editor.update(cx, |editor, cx| {
                         (editor.snapshot(window, cx), editor.read_only(cx))
@@ -9763,22 +9826,7 @@ impl Element for EditorElement {
 
                     // Offset the content_bounds from the text_bounds by the gutter margin (which
                     // is roughly half a character wide) to make hit testing work more like how we want.
-                    let wysiwyg_centering_offset = if self.editor.read(cx).markdown_wysiwyg_state.active {
-                        let wrap_width = calculate_wrap_width(
-                            self.editor.read(cx).soft_wrap_mode(cx),
-                            editor_width,
-                            em_layout_width,
-                        );
-                        if let Some(wrap_width) = wrap_width {
-                            let extra = (editor_width - wrap_width).max(Pixels::ZERO);
-                            extra / 2.0
-                        } else {
-                            Pixels::ZERO
-                        }
-                    } else {
-                        Pixels::ZERO
-                    };
-                    let content_offset = point(editor_margins.gutter.margin + wysiwyg_centering_offset, Pixels::ZERO);
+                    let content_offset = point(editor_margins.gutter.margin, Pixels::ZERO);
                     let content_origin = text_hitbox.origin + content_offset;
 
                     let height_in_lines = f64::from(bounds.size.height / line_height);
@@ -10383,7 +10431,7 @@ impl Element for EditorElement {
                                     &mut scroll_width,
                                     &editor_margins,
                                     em_width,
-                                    gutter_dimensions.full_width() + wysiwyg_centering_offset,
+                                    gutter_dimensions.full_width(),
                                     line_height,
                                     &mut line_layouts,
                                     &local_selections,
