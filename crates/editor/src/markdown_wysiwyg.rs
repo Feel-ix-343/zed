@@ -841,6 +841,8 @@ fn apply_marker_folds(
     let bullet_placeholder = FoldPlaceholder {
         render: Arc::new(|_fold_id, _range, _cx| {
             gpui::div()
+                .flex()
+                .items_center()
                 .child(SharedString::from("• "))
                 .into_any_element()
         }),
