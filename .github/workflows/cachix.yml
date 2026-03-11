@@ -2,6 +2,8 @@ name: Build and push to Cachix
 
 on:
   push:
+    branches:
+      - main
 
 jobs:
   build-and-cache:
