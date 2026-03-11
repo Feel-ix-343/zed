@@ -3,7 +3,7 @@ name: Build and push to Cachix
 on:
   push:
     branches:
-      - devin/1773098637-wysiwyg-markdown-preview
+      - main
 
 jobs:
   build-and-cache:
@@ -17,6 +17,8 @@ jobs:
           extra_nix_config: |
             extra-substituters = https://zed.cachix.org https://cache.garnix.io
             extra-trusted-public-keys = zed.cachix.org-1:/pHQ6dpMsAZk2DiP4WCL0p9YDNKWj2Q5FL20bNmw1cU= cache.garnix.io:CTFPyKSLcx5RMJKfLo5EEPUObbA78b0YQ2DTCJXqr9g=
+
+      - uses: DeterminateSystems/magic-nix-cache-action@v8
 
       - uses: cachix/cachix-action@v15
         with:
