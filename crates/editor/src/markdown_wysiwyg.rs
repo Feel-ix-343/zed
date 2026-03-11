@@ -1110,7 +1110,7 @@ fn apply_blocks(
                 image_element = image_element.h(gpui::px(height as f32));
             }
             if image_width.is_none() && image_height.is_none() {
-                image_element = image_element.w(gpui::px(300.0));
+                image_element = image_element.max_w(gpui::px(300.0));
             }
 
             gpui::div()
