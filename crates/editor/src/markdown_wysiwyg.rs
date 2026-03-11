@@ -491,6 +491,7 @@ impl Editor {
             {
                 self.soft_wrap_mode_override = soft_wrap;
             }
+            self.preferred_line_length_override = None;
             self.set_text_style_refinement(TextStyleRefinement::default());
             self.style = None;
             self.markdown_wysiwyg_state.active = false;
@@ -510,6 +511,7 @@ impl Editor {
             self.set_show_gutter(false, cx);
             self.soft_wrap_mode_override =
                 Some(language::language_settings::SoftWrap::PreferredLineLength);
+            self.preferred_line_length_override = Some(READABLE_LINE_LENGTH);
             self.markdown_wysiwyg_state.active = true;
             refresh_wysiwyg_decorations(self, cx);
             fetch_references(self, cx);

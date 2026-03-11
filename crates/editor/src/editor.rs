@@ -1165,6 +1165,7 @@ pub struct Editor {
     inline_diagnostics: Vec<(Anchor, InlineDiagnostic)>,
     soft_wrap_mode_override: Option<language_settings::SoftWrap>,
     hard_wrap: Option<usize>,
+    preferred_line_length_override: Option<u32>,
     project: Option<Entity<Project>>,
     semantics_provider: Option<Rc<dyn SemanticsProvider>>,
     completion_provider: Option<Rc<dyn CompletionProvider>>,
@@ -2401,6 +2402,7 @@ impl Editor {
             inline_diagnostics_update: Task::ready(()),
             inline_diagnostics: Vec::new(),
             soft_wrap_mode_override,
+            preferred_line_length_override: None,
             diagnostics_max_severity,
             hard_wrap: None,
             completion_provider: project.clone().map(|project| Rc::new(project) as _),
@@ -21278,16 +21280,19 @@ impl Editor {
     pub fn soft_wrap_mode(&self, cx: &App) -> SoftWrap {
         let settings = self.buffer.read(cx).language_settings(cx);
         let mode = self.soft_wrap_mode_override.unwrap_or(settings.soft_wrap);
+        let line_length = self
+            .preferred_line_length_override
+            .unwrap_or(settings.preferred_line_length);
         match mode {
             language_settings::SoftWrap::PreferLine | language_settings::SoftWrap::None => {
                 SoftWrap::None
             }
             language_settings::SoftWrap::EditorWidth => SoftWrap::EditorWidth,
             language_settings::SoftWrap::PreferredLineLength => {
-                SoftWrap::Column(settings.preferred_line_length)
+                SoftWrap::Column(line_length)
             }
             language_settings::SoftWrap::Bounded => {
-                SoftWrap::Bounded(settings.preferred_line_length)
+                SoftWrap::Bounded(line_length)
             }
         }
     }
