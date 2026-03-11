@@ -6060,19 +6060,27 @@ impl EditorElement {
                     paint_highlight(range.start, range.end, color, edges);
                 }
 
-                for (guide_x, active) in layout.wrap_guides.iter() {
-                    let color = if *active {
-                        cx.theme().colors().editor_active_wrap_guide
-                    } else {
-                        cx.theme().colors().editor_wrap_guide
-                    };
-                    window.paint_quad(fill(
-                        Bounds {
-                            origin: point(*guide_x, layout.position_map.text_hitbox.origin.y),
-                            size: size(px(1.), layout.position_map.text_hitbox.size.height),
-                        },
-                        color,
-                    ));
+                if layout.wysiwyg_centering_offset == Pixels::ZERO {
+                    for (guide_x, active) in layout.wrap_guides.iter() {
+                        let color = if *active {
+                            cx.theme().colors().editor_active_wrap_guide
+                        } else {
+                            cx.theme().colors().editor_wrap_guide
+                        };
+                        window.paint_quad(fill(
+                            Bounds {
+                                origin: point(
+                                    *guide_x,
+                                    layout.position_map.text_hitbox.origin.y,
+                                ),
+                                size: size(
+                                    px(1.),
+                                    layout.position_map.text_hitbox.size.height,
+                                ),
+                            },
+                            color,
+                        ));
+                    }
                 }
             }
         })
