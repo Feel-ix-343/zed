@@ -34,12 +34,14 @@ pub struct MarkdownWysiwygState {
     pub active: bool,
     reparse_task: Task<()>,
     references_task: Task<()>,
-    block_ids: Vec<CustomBlockId>,
+    block_ids: Vec<(CustomBlockId, Range<usize>)>,
     references_block_ids: Vec<CustomBlockId>,
     pub cached_references: Vec<String>,
     previous_show_gutter: Option<bool>,
     previous_show_line_numbers: Option<Option<bool>>,
     previous_soft_wrap_override: Option<Option<language::language_settings::SoftWrap>>,
+    /// Guard flag to prevent recursive cursor adjustment in on_selection_changed.
+    adjusting_cursor: bool,
 }
 
 impl MarkdownWysiwygState {
@@ -49,6 +51,7 @@ impl MarkdownWysiwygState {
             reparse_task: Task::ready(()),
             references_task: Task::ready(()),
             block_ids: Vec::new(),
+            adjusting_cursor: false,
             references_block_ids: Vec::new(),
             cached_references: Vec::new(),
             previous_show_gutter: None,
@@ -943,16 +946,13 @@ fn apply_blocks(
     active_range: &Range<usize>,
     cx: &mut Context<Editor>,
 ) {
-    let old_block_ids: HashSet<CustomBlockId> = editor
-        .markdown_wysiwyg_state
-        .block_ids
-        .drain(..)
-        .collect();
-    if !old_block_ids.is_empty() {
-        editor.remove_blocks(old_block_ids, None, cx);
-    }
+    // Collect old blocks with their ranges for smart diffing.
+    let old_blocks: Vec<(CustomBlockId, Range<usize>)> =
+        editor.markdown_wysiwyg_state.block_ids.drain(..).collect();
 
+    // Build desired block properties and track their source ranges.
     let mut block_properties: Vec<BlockProperties<Anchor>> = Vec::new();
+    let mut block_ranges: Vec<Range<usize>> = Vec::new();
 
     for heading in &decorations.headings {
         if range_on_cursor_line(&heading.line_range, active_range) {
@@ -992,6 +992,7 @@ fn apply_blocks(
                 .into_any_element()
         });
 
+        block_ranges.push(heading.line_range.clone());
         block_properties.push(BlockProperties {
             placement: BlockPlacement::Replace(start..=end),
             height: Some(1),
@@ -1113,6 +1114,7 @@ fn apply_blocks(
                 .into_any_element()
         });
 
+        block_ranges.push(table.range.clone());
         block_properties.push(BlockProperties {
             placement: BlockPlacement::Replace(start..=end),
             height: Some(row_count + 1),
@@ -1168,6 +1170,7 @@ fn apply_blocks(
 
         let height = 10;
 
+        block_ranges.push(image.range.clone());
         block_properties.push(BlockProperties {
             placement: BlockPlacement::Replace(start..=end),
             height: Some(height),
@@ -1177,10 +1180,52 @@ fn apply_blocks(
         });
     }
 
-    if !block_properties.is_empty() {
-        let new_ids = editor.insert_blocks(block_properties, None, cx);
-        editor.markdown_wysiwyg_state.block_ids = new_ids;
+    // Smart diff: keep blocks whose range hasn't changed, only remove/add what differs.
+    let mut kept_blocks: Vec<(CustomBlockId, Range<usize>)> = Vec::new();
+    let mut to_remove: HashSet<CustomBlockId> = HashSet::default();
+    let mut new_matched: Vec<bool> = vec![false; block_ranges.len()];
+
+    for (id, old_range) in old_blocks {
+        let mut matched = false;
+        for (i, new_range) in block_ranges.iter().enumerate() {
+            if !new_matched[i] && old_range == *new_range {
+                kept_blocks.push((id, old_range));
+                new_matched[i] = true;
+                matched = true;
+                break;
+            }
+        }
+        if !matched {
+            to_remove.insert(id);
+        }
     }
+
+    if !to_remove.is_empty() {
+        editor.remove_blocks(to_remove, None, cx);
+    }
+
+    // Only insert blocks for ranges that weren't already present.
+    let new_properties: Vec<BlockProperties<Anchor>> = block_properties
+        .into_iter()
+        .enumerate()
+        .filter(|(i, _)| !new_matched[*i])
+        .map(|(_, p)| p)
+        .collect();
+    let new_ranges: Vec<Range<usize>> = block_ranges
+        .into_iter()
+        .enumerate()
+        .filter(|(i, _)| !new_matched[*i])
+        .map(|(_, r)| r)
+        .collect();
+
+    if !new_properties.is_empty() {
+        let new_ids = editor.insert_blocks(new_properties, None, cx);
+        for (id, range) in new_ids.into_iter().zip(new_ranges) {
+            kept_blocks.push((id, range));
+        }
+    }
+
+    editor.markdown_wysiwyg_state.block_ids = kept_blocks;
 
     // Render references section if we have cached references
     apply_references_block(editor, snapshot, cx);
@@ -1402,6 +1447,7 @@ fn clear_wysiwyg_decorations(editor: &mut Editor, cx: &mut Context<Editor>) {
         .markdown_wysiwyg_state
         .block_ids
         .drain(..)
+        .map(|(id, _)| id)
         .collect();
     if !old_block_ids.is_empty() {
         editor.remove_blocks(old_block_ids, None, cx);
@@ -1418,11 +1464,56 @@ fn clear_wysiwyg_decorations(editor: &mut Editor, cx: &mut Context<Editor>) {
     editor.markdown_wysiwyg_state.cached_references.clear();
 }
 
-pub fn on_selection_changed(editor: &mut Editor, cx: &mut Context<Editor>) {
-    if !editor.markdown_wysiwyg_state.active {
+pub fn on_selection_changed(editor: &mut Editor, window: &mut Window, cx: &mut Context<Editor>) {
+    if !editor.markdown_wysiwyg_state.active || editor.markdown_wysiwyg_state.adjusting_cursor {
         return;
     }
+
+    let snapshot = editor.buffer().read(cx).snapshot(cx);
+    let text = snapshot.text();
+    let cursor = cursor_offset(editor, cx);
+
+    let heading_adjustment = {
+        let decorations = parse_markdown_decorations(&text);
+        let mut adjustment: Option<usize> = None;
+        for heading in &decorations.headings {
+            if cursor == heading.line_range.start {
+                let was_block = editor.markdown_wysiwyg_state.block_ids
+                    .iter()
+                    .any(|(_, range)| *range == heading.line_range);
+                if was_block {
+                    let prefix_len = heading.level as usize;
+                    let space_after = if text.as_bytes().get(heading.line_range.start + prefix_len) == Some(&b' ') {
+                        1
+                    } else {
+                        0
+                    };
+                    let content_start = heading.line_range.start + prefix_len + space_after;
+                    if content_start <= heading.line_range.end {
+                        adjustment = Some(content_start);
+                    }
+                }
+                break;
+            }
+        }
+        adjustment
+    };
+
+    // Refresh decorations before adjusting the cursor. This removes the heading
+    // Replace block so that anchor_before resolves to the correct offset inside
+    // the (now un-replaced) heading text.
     refresh_wysiwyg_decorations(editor, cx);
+
+    if let Some(target_offset) = heading_adjustment {
+        editor.markdown_wysiwyg_state.adjusting_cursor = true;
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
+        let anchor = snapshot.anchor_before(MultiBufferOffset(target_offset));
+        use crate::SelectionEffects;
+        editor.change_selections(SelectionEffects::default(), window, cx, |s| {
+            s.select_anchor_ranges([anchor..anchor]);
+        });
+        editor.markdown_wysiwyg_state.adjusting_cursor = false;
+    }
 }
 
 /// Checks if the cursor is on a wikilink in WYSIWYG mode, and if so,
