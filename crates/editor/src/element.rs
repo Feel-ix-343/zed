@@ -5902,12 +5902,18 @@ impl EditorElement {
     fn paint_background(&self, layout: &EditorLayout, window: &mut Window, cx: &mut App) {
         window.paint_layer(layout.hitbox.bounds, |window| {
             let scroll_top = layout.position_map.snapshot.scroll_position().y;
-            let gutter_bg = cx.theme().colors().editor_gutter_background;
-            window.paint_quad(fill(layout.gutter_hitbox.bounds, gutter_bg));
-            window.paint_quad(fill(
-                layout.position_map.text_hitbox.bounds,
-                self.style.background,
-            ));
+            if layout.wysiwyg_centering_offset > Pixels::ZERO {
+                // In WYSIWYG mode, paint a single uniform background over the entire
+                // editor hitbox (gutter + text) to avoid the seam/line between areas.
+                window.paint_quad(fill(layout.hitbox.bounds, self.style.background));
+            } else {
+                let gutter_bg = cx.theme().colors().editor_gutter_background;
+                window.paint_quad(fill(layout.gutter_hitbox.bounds, gutter_bg));
+                window.paint_quad(fill(
+                    layout.position_map.text_hitbox.bounds,
+                    self.style.background,
+                ));
+            }
 
             if matches!(
                 layout.mode,
@@ -9673,6 +9679,7 @@ impl Element for EditorElement {
                 // When WYSIWYG mode is active, shrink the bounds from the left to add
                 // margin to the editor component itself rather than offsetting text internally.
                 let wysiwyg_is_active = self.editor.read(cx).markdown_wysiwyg_state.active;
+                let mut wysiwyg_centering_offset = Pixels::ZERO;
                 let bounds = if wysiwyg_is_active {
                     let style = &self.style;
                     let rem_size = window.rem_size();
@@ -9719,15 +9726,15 @@ impl Element for EditorElement {
                         preliminary_editor_width,
                         em_layout_width,
                     );
-                    let centering_offset = if let Some(wrap_width) = wrap_width {
+                    wysiwyg_centering_offset = if let Some(wrap_width) = wrap_width {
                         (preliminary_editor_width - wrap_width).max(Pixels::ZERO) / 2.0
                     } else {
                         Pixels::ZERO
                     };
 
                     Bounds {
-                        origin: point(bounds.origin.x + centering_offset, bounds.origin.y),
-                        size: size(bounds.size.width - centering_offset, bounds.size.height),
+                        origin: point(bounds.origin.x + wysiwyg_centering_offset, bounds.origin.y),
+                        size: size(bounds.size.width - wysiwyg_centering_offset, bounds.size.height),
                     }
                 } else {
                     bounds
@@ -11145,6 +11152,7 @@ impl Element for EditorElement {
                         expand_toggles,
                         text_align: self.style.text.text_align,
                         content_width: text_hitbox.size.width,
+                        wysiwyg_centering_offset,
                     }
                 })
             })
@@ -11186,6 +11194,16 @@ impl Element for EditorElement {
         window.with_rem_size(rem_size, |window| {
             window.with_text_style(Some(text_style), |window| {
                 window.with_content_mask(Some(ContentMask { bounds }), |window| {
+                    // In WYSIWYG mode, paint white background on the left margin area
+                    // (between original bounds and the shifted editor hitbox).
+                    if layout.wysiwyg_centering_offset > Pixels::ZERO {
+                        let margin_bounds = Bounds {
+                            origin: bounds.origin,
+                            size: size(layout.wysiwyg_centering_offset, bounds.size.height),
+                        };
+                        window.paint_quad(fill(margin_bounds, self.style.background));
+                    }
+
                     self.paint_mouse_listeners(layout, window, cx);
                     self.paint_background(layout, window, cx);
 
@@ -11336,6 +11354,7 @@ pub struct EditorLayout {
     document_colors: Option<(DocumentColorsRenderMode, Vec<(Range<DisplayPoint>, Hsla)>)>,
     text_align: TextAlign,
     content_width: Pixels,
+    wysiwyg_centering_offset: Pixels,
 }
 
 struct StickyHeaders {
