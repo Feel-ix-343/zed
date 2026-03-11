@@ -3667,7 +3667,7 @@ impl Editor {
 
         cx.emit(EditorEvent::SelectionsChanged { local });
 
-        markdown_wysiwyg::on_selection_changed(self, cx);
+        markdown_wysiwyg::on_selection_changed(self, window, cx);
         let selections = &self.selections.disjoint_anchors_arc();
         if selections.len() == 1 {
             cx.emit(SearchEvent::ActiveMatchChanged)
