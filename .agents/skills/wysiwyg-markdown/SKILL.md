@@ -1,8 +1,3 @@
----
-name: wysiwyg-markdown
-description: Development guide for the WYSIWYG markdown editor feature in this Zed fork. Covers architecture, key files, building, testing, and the Cachix CI pipeline.
----
-
 # WYSIWYG Markdown Editor Development
 
 This skill covers working on the WYSIWYG markdown rendering feature in this Zed fork.
@@ -88,7 +83,7 @@ Files are detected as markdown by extension: `.md`, `.markdown`, `.mdx`
 ## Cachix CI Pipeline
 
 - **Workflow**: `.github/workflows/cachix.yml`
-- **Triggers**: Pushes to main
+- **Triggers**: All pushes to the fork
 - **Cache**: `oxmd` on cachix.org — auth token stored as `CACHIX_AUTH_TOKEN` GitHub Actions secret
 - **Upstream caches used**: `zed.cachix.org`, `cache.garnix.io` (read-only, for pulling pre-built deps)
 - **Runner caching**: `DeterminateSystems/magic-nix-cache-action` caches nix store paths in GitHub Actions cache between runs
