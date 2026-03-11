@@ -40,6 +40,7 @@ pub mod scroll;
 mod selections_collection;
 pub mod semantic_tokens;
 mod split;
+mod markdown_wysiwyg;
 pub mod split_editor_view;
 pub mod tasks;
 
@@ -1333,6 +1334,7 @@ pub struct Editor {
     inline_value_cache: InlineValueCache,
     number_deleted_lines: bool,
 
+    pub(crate) markdown_wysiwyg_state: markdown_wysiwyg::MarkdownWysiwygState,
     selection_drag_state: SelectionDragState,
     colors: Option<LspColorData>,
     post_scroll_update: Task<()>,
@@ -2608,6 +2610,7 @@ impl Editor {
             bracket_fetched_tree_sitter_chunks: HashMap::default(),
             number_deleted_lines: false,
             refresh_matching_bracket_highlights_task: Task::ready(()),
+            markdown_wysiwyg_state: markdown_wysiwyg::MarkdownWysiwygState::new(),
             refresh_document_symbols_task: Task::ready(()).shared(),
             lsp_document_symbols: HashMap::default(),
             refresh_outline_symbols_at_cursor_at_cursor_task: Task::ready(()),
@@ -3660,6 +3663,7 @@ impl Editor {
 
         cx.emit(EditorEvent::SelectionsChanged { local });
 
+        markdown_wysiwyg::on_selection_changed(self, cx);
         let selections = &self.selections.disjoint_anchors_arc();
         if selections.len() == 1 {
             cx.emit(SearchEvent::ActiveMatchChanged)
@@ -14089,6 +14093,12 @@ impl Editor {
         if let Some(item) = cx.read_from_clipboard() {
             let entries = item.entries();
 
+            // In WYSIWYG mode, intercept image clipboard entries
+            if let Some(ClipboardEntry::Image(image)) = entries.first() {
+                if markdown_wysiwyg::try_handle_image_paste(self, image, window, cx) {
+                    return;
+                }
+            }
             match entries.first() {
                 // For now, we only support applying metadata if there's one string. In the future, we can incorporate all the selections
                 // of all the pasted entries.
@@ -24166,6 +24176,7 @@ impl Editor {
 
                 cx.emit(EditorEvent::BufferEdited);
                 cx.emit(SearchEvent::MatchesInvalidated);
+                markdown_wysiwyg::schedule_wysiwyg_refresh(self, cx);
 
                 let Some(project) = &self.project else { return };
                 let (telemetry, is_via_ssh) = {
