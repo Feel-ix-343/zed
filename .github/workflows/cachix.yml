@@ -2,8 +2,6 @@ name: Build and push to Cachix
 
 on:
   push:
-    branches:
-      - devin/1773098637-wysiwyg-markdown-preview
 
 jobs:
   build-and-cache:
