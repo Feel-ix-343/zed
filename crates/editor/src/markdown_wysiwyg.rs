@@ -1469,21 +1469,15 @@ pub fn on_selection_changed(editor: &mut Editor, window: &mut Window, cx: &mut C
         return;
     }
 
-    // When clicking on a heading Replace block, the cursor lands at column 0
-    // (before the "# " prefix). Detect this and adjust the cursor to the start
-    // of the heading content so the user can immediately edit the text.
     let snapshot = editor.buffer().read(cx).snapshot(cx);
     let text = snapshot.text();
     let cursor = cursor_offset(editor, cx);
 
-    // Only adjust if the cursor is at a position that was previously covered by
-    // a heading Replace block (i.e., the heading range is in block_ids).
     let heading_adjustment = {
         let decorations = parse_markdown_decorations(&text);
         let mut adjustment: Option<usize> = None;
         for heading in &decorations.headings {
             if cursor == heading.line_range.start {
-                // Check if there was a Replace block for this heading
                 let was_block = editor.markdown_wysiwyg_state.block_ids
                     .iter()
                     .any(|(_, range)| *range == heading.line_range);
@@ -1505,8 +1499,14 @@ pub fn on_selection_changed(editor: &mut Editor, window: &mut Window, cx: &mut C
         adjustment
     };
 
+    // Refresh decorations before adjusting the cursor. This removes the heading
+    // Replace block so that anchor_before resolves to the correct offset inside
+    // the (now un-replaced) heading text.
+    refresh_wysiwyg_decorations(editor, cx);
+
     if let Some(target_offset) = heading_adjustment {
         editor.markdown_wysiwyg_state.adjusting_cursor = true;
+        let snapshot = editor.buffer().read(cx).snapshot(cx);
         let anchor = snapshot.anchor_before(MultiBufferOffset(target_offset));
         use crate::SelectionEffects;
         editor.change_selections(SelectionEffects::default(), window, cx, |s| {
@@ -1514,8 +1514,6 @@ pub fn on_selection_changed(editor: &mut Editor, window: &mut Window, cx: &mut C
         });
         editor.markdown_wysiwyg_state.adjusting_cursor = false;
     }
-
-    refresh_wysiwyg_decorations(editor, cx);
 }
 
 /// Checks if the cursor is on a wikilink in WYSIWYG mode, and if so,
